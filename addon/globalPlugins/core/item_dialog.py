@@ -74,6 +74,9 @@ class InstantAccessItemDialog(wx.Dialog):
 		self.snippetActionRow, self.snippetActionChoice = self._createSnippetActionRow()
 		sizerHelper.addItem(self.snippetActionRow, flag=wx.EXPAND)
 
+		self.restrictionRow, self.restrictToAppsCheck, self.appNameLabel, self.appNameCtrl = self._createRestrictionRow()
+		sizerHelper.addItem(self.restrictionRow, flag=wx.EXPAND)
+
 		self.shortcutRow, self.shortcutButton = self._createShortcutRow()
 		sizerHelper.addItem(self.shortcutRow, flag=wx.EXPAND)
 
@@ -93,6 +96,7 @@ class InstantAccessItemDialog(wx.Dialog):
 		self.Bind(wx.EVT_BUTTON, self.onSetShortcut, self.shortcutButton)
 		self.Bind(wx.EVT_BUTTON, self.onSelectCommand, self.commandButton)
 		self.Bind(wx.EVT_BUTTON, self.onOk, self.okButton)
+		self.Bind(wx.EVT_CHECKBOX, self.onRestrictionToggle, self.restrictToAppsCheck)
 		self.Bind(wx.EVT_CHAR_HOOK, self.onCharHook)
 
 		if existingItem:
@@ -100,6 +104,7 @@ class InstantAccessItemDialog(wx.Dialog):
 
 		self.updateShortcutLabel()
 		self.updateTypeState()
+		self.updateRestrictionState()
 		self.CentreOnScreen()
 
 	def _createPathRow(self):
@@ -163,6 +168,20 @@ class InstantAccessItemDialog(wx.Dialog):
 		row.Add(button, 0)
 		return row, button
 
+	def _createRestrictionRow(self):
+		row = wx.BoxSizer(wx.HORIZONTAL)
+		# Translators: Option to restrict the shortcut to specific apps.
+		check = wx.CheckBox(self, wx.ID_ANY, _("Restrict this shortcut to work in certain apps"))
+		# Translators: Label for app name field when shortcut restriction is enabled.
+		appLabel = wx.StaticText(self, wx.ID_ANY, _("App name"))
+		# Translators: Placeholder text for app name restriction field.
+		appCtrl = wx.TextCtrl(self, wx.ID_ANY)
+		appCtrl.SetHint(_("App name"))
+		row.Add(check, 0, wx.ALIGN_CENTER_VERTICAL)
+		row.Add(appLabel, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, guiHelper.SPACE_BETWEEN_ASSOCIATED_CONTROL_HORIZONTAL)
+		row.Add(appCtrl, 1, wx.LEFT, guiHelper.SPACE_BETWEEN_ASSOCIATED_CONTROL_HORIZONTAL)
+		return row, check, appLabel, appCtrl
+
 	def _setRowVisible(self, row, visible):
 		for child in row.GetChildren():
 			if child.IsWindow():
@@ -186,6 +205,11 @@ class InstantAccessItemDialog(wx.Dialog):
 		if self.selectedCommandLabel:
 			self.commandCtrl.SetValue(self.selectedCommandLabel)
 
+		appName = (item.get("appName", "") or "").strip()
+		if appName:
+			self.restrictToAppsCheck.SetValue(True)
+			self.appNameCtrl.SetValue(appName)
+
 		if itemType == "TextSnippets":
 			self.snippetCtrl.SetValue(item.get("path", ""))
 			action = (item.get("textAction", TEXT_SNIPPET_ACTION_VALUES[0]) or "").strip().lower()
@@ -200,6 +224,12 @@ class InstantAccessItemDialog(wx.Dialog):
 			# Translators: Label for the shortcut button when no shortcut is set.
 			label = _("Shortcut key: Undefined")
 		self.shortcutButton.SetLabel(label)
+
+	def updateRestrictionState(self):
+		isRestricted = self.restrictToAppsCheck.GetValue()
+		self.appNameLabel.Show(isRestricted)
+		self.appNameCtrl.Show(isRestricted)
+		self.Layout()
 
 	def onCharHook(self, event):
 		if event.GetKeyCode() == wx.WXK_ESCAPE:
@@ -225,6 +255,9 @@ class InstantAccessItemDialog(wx.Dialog):
 
 	def onTypeChange(self, event):
 		self.updateTypeState()
+
+	def onRestrictionToggle(self, event):
+		self.updateRestrictionState()
 
 	def onBrowse(self, event):
 		itemType = TYPE_SECTIONS[self.typeChoice.GetSelection()]
@@ -290,6 +323,7 @@ class InstantAccessItemDialog(wx.Dialog):
 		arguments = self.argumentsCtrl.GetValue().strip() if itemType == "Programs" else ""
 		textAction = TEXT_SNIPPET_ACTION_VALUES[self.snippetActionChoice.GetSelection()]
 		commandLabel = self.selectedCommandLabel.strip()
+		appName = self.appNameCtrl.GetValue().strip().lower() if self.restrictToAppsCheck.GetValue() else ""
 
 		if itemType == "TextSnippets":
 			path = self.snippetCtrl.GetValue()
@@ -307,6 +341,10 @@ class InstantAccessItemDialog(wx.Dialog):
 		if itemType != "TextSnippets" and not path:
 			gui.messageBox(_("All fields are required."), ERROR_CAPTION, wx.OK | wx.ICON_ERROR)
 			return None
+		if self.restrictToAppsCheck.GetValue() and not appName:
+			# Translators: Error shown when app restriction is enabled without entering app name.
+			gui.messageBox(_("App name is required when app restriction is enabled."), ERROR_CAPTION, wx.OK | wx.ICON_ERROR)
+			return None
 
 		normalizedGesture = normalizeGesture(gesture)
 		if normalizedGesture in RESERVED_GESTURES:
@@ -323,10 +361,15 @@ class InstantAccessItemDialog(wx.Dialog):
 			gui.messageBox(_("This name already exists."), ERROR_CAPTION, wx.OK | wx.ICON_ERROR)
 			return None
 
-		gestureMap = self.configManager.getGestureToNameMap()
-		existingName = gestureMap.get(normalizedGesture.lower())
-		if existingName and (not self.existingItem or existingName != self.existingItem["name"]):
-			gui.messageBox(_("This shortcut is already assigned."), ERROR_CAPTION, wx.OK | wx.ICON_ERROR)
+		excludeName = self.existingItem["name"] if self.existingItem else ""
+		conflictItem = self.configManager.findGestureConflict(normalizedGesture, appName=appName, excludeName=excludeName)
+		if conflictItem:
+			if appName:
+				# Translators: Error shown when a shortcut is already assigned in the same app restriction scope.
+				gui.messageBox(_("This shortcut is already assigned for this app."), ERROR_CAPTION, wx.OK | wx.ICON_ERROR)
+			else:
+				# Translators: Error shown when a global shortcut is already assigned.
+				gui.messageBox(_("This global shortcut is already assigned."), ERROR_CAPTION, wx.OK | wx.ICON_ERROR)
 			return None
 
 		return {
@@ -336,6 +379,7 @@ class InstantAccessItemDialog(wx.Dialog):
 			"arguments": arguments,
 			"textAction": textAction,
 			"commandLabel": commandLabel,
+			"appName": appName,
 			"gesture": normalizedGesture,
 		}
 

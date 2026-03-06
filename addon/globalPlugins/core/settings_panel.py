@@ -6,14 +6,12 @@ from gui.settingsDialogs import SettingsPanel
 import shutil
 import wx
 
-from .config_io import ensureConfigParser, saveConfig
+from .config_io import loadConfigFromPathStrict, saveConfig
 from .constants import (
 	ALL_FILES_WILDCARD,
-	CONFIG_SECTIONS,
 	CONFIRM_CAPTION,
 	ERROR_CAPTION,
 	TEXT_SNIPPET_ACTION_TO_LABEL,
-	TYPE_SECTIONS,
 	TYPE_TO_LABEL,
 	VERBOSITY_ADVANCED,
 	VERBOSITY_BEGINNER,
@@ -146,6 +144,7 @@ class InstantAccessSettingsPanel(SettingsPanel):
 				result.get("arguments", ""),
 				result.get("textAction", "type"),
 				result.get("commandLabel", ""),
+				result.get("appName", ""),
 			)
 			self.refreshList(selectName=result["name"])
 			if self.onConfigChanged:
@@ -170,6 +169,7 @@ class InstantAccessSettingsPanel(SettingsPanel):
 				result.get("arguments", ""),
 				result.get("textAction", "type"),
 				result.get("commandLabel", ""),
+				result.get("appName", ""),
 			)
 			self.refreshList(selectName=result["name"])
 			if self.onConfigChanged:
@@ -212,7 +212,7 @@ class InstantAccessSettingsPanel(SettingsPanel):
 			wildcard=ALL_FILES_WILDCARD,
 			style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
 		)
-		dialog.SetFilename("config.ini")
+		dialog.SetFilename("config.json")
 		if dialog.ShowModal() == wx.ID_OK:
 			destinationPath = dialog.GetPath()
 			try:
@@ -234,12 +234,7 @@ class InstantAccessSettingsPanel(SettingsPanel):
 		if dialog.ShowModal() == wx.ID_OK:
 			sourcePath = dialog.GetPath()
 			try:
-				testConfig = ensureConfigParser()
-				with open(sourcePath, "r", encoding="utf-8") as handle:
-					testConfig.read_file(handle)
-				for section in CONFIG_SECTIONS:
-					if not testConfig.has_section(section):
-						testConfig.add_section(section)
+				testConfig = loadConfigFromPathStrict(sourcePath)
 				saveConfig(self.configManager.getConfigPath(), testConfig)
 				self.refreshList()
 				currentVerbosity = self.configManager.getVerbosityLevel()
